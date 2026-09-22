@@ -1,0 +1,31 @@
+{
+  "name": "webhook-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "next": "15.2.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "mcp-handler": "2.2.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "typescript": "5.7.3",
+    "@types/node": "22.13.4",
+    "@types/react": "19.0.8",
+    "@types/react-dom": "19.0.3",
+    "vitest": "3.0.5",
+    "eslint": "9.20.1",
+    "@eslint/js": "9.20.0",
+    "typescript-eslint": "8.24.0"
+  }
+}
