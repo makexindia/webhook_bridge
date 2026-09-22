@@ -19,9 +19,9 @@ export const webhookInputShape = {
     .optional()
     .describe("Optional HTTP headers to send (dangerous headers are stripped)"),
   payload: z
-    .record(z.string(), z.unknown())
+    .union([z.string(), z.record(z.string(), z.unknown())])
     .optional()
-    .describe("Optional JSON payload object (for POST requests)"),
+    .describe("Optional payload: structured JSON object or raw string"),
   signHmac: z
     .boolean()
     .optional()
@@ -268,7 +268,7 @@ export function sanitizeOutboundHeaders(
   for (const [key, value] of Object.entries(customHeaders)) {
     const lowerKey = key.toLowerCase();
     if (!FORBIDDEN_HEADERS.has(lowerKey) && value !== undefined && value !== null) {
-      sanitized[key] = String(value);
+      sanitized[lowerKey] = String(value);
     }
   }
 
@@ -404,10 +404,18 @@ export async function dispatchWebhook(
     let requestBody: string | undefined = undefined;
 
     if (input.method === "POST" && input.payload !== undefined) {
-      serializedBody = JSON.stringify(input.payload);
-      requestBody = serializedBody;
-      if (!outboundHeaders["content-type"]) {
-        outboundHeaders["content-type"] = "application/json";
+      if (typeof input.payload === "string") {
+        serializedBody = input.payload;
+        requestBody = serializedBody;
+        if (!outboundHeaders["content-type"]) {
+          outboundHeaders["content-type"] = "text/plain; charset=utf-8";
+        }
+      } else {
+        serializedBody = JSON.stringify(input.payload);
+        requestBody = serializedBody;
+        if (!outboundHeaders["content-type"]) {
+          outboundHeaders["content-type"] = "application/json; charset=utf-8";
+        }
       }
     }
 

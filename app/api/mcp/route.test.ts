@@ -119,4 +119,63 @@ describe("app/api/mcp/route - Gemini Spark Auth & Anti-DCR Trap", () => {
     expect(postRes.status).toBe(401);
     expect(postRes.headers.get("www-authenticate")).toBeNull();
   });
+
+  it("returns declared MCP tool annotations and reframed description in tools/list", async () => {
+    // 1. Initialize handshake
+    const initReq = new Request(`https://bridge.example.com/api/mcp?token=${TEST_SECRET}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "1.0.0" },
+        },
+      }),
+    });
+    const initRes = await POST(initReq);
+    expect(initRes.status).toBe(200);
+
+    // 2. Query tools/list
+    const toolsReq = new Request(`https://bridge.example.com/api/mcp?token=${TEST_SECRET}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+    const toolsRes = await POST(toolsReq);
+    expect(toolsRes.status).toBe(200);
+
+    let data: { result?: { tools?: Array<{ name: string; description?: string; annotations?: Record<string, unknown> }> } };
+    const contentType = toolsRes.headers.get("content-type") || "";
+    if (contentType.includes("text/event-stream")) {
+      const text = await toolsRes.text();
+      const match = text.match(/data:\s*(\{.*\})/);
+      data = match ? JSON.parse(match[1]) : {};
+    } else {
+      data = await toolsRes.json();
+    }
+
+    const tool = data.result?.tools?.find((t) => t.name === "dispatch_webhook");
+    expect(tool).toBeDefined();
+    expect(tool?.description).toContain("Relays non-destructive event payloads");
+    expect(tool?.annotations).toBeDefined();
+    expect(tool?.annotations?.readOnlyHint).toBe(true);
+    expect(tool?.annotations?.destructiveHint).toBe(false);
+    expect(tool?.annotations?.idempotentHint).toBe(true);
+    expect(tool?.annotations?.openWorldHint).toBe(true);
+  });
 });

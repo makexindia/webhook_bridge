@@ -160,8 +160,8 @@ describe("lib/webhook - Header Sanitization", () => {
 
     const sanitized = sanitizeOutboundHeaders(input);
     expect(sanitized).toEqual({
-      Authorization: "Bearer target-api-key",
-      "X-Custom-Client": "gemini-spark",
+      authorization: "Bearer target-api-key",
+      "x-custom-client": "gemini-spark",
     });
   });
 });
@@ -172,6 +172,29 @@ describe("lib/webhook - Canonical HMAC-SHA256 Signing", () => {
     const method = "POST";
     const canonicalUrl = "https://api.makex.in/v1/events";
     const serializedBody = JSON.stringify({ event: "order_created", amount: 100 });
+    const secret = "test-secret-key-12345";
+
+    const bodyHash = crypto.createHash("sha256").update(serializedBody, "utf8").digest("hex");
+    const canonicalString = `${timestamp}\n${method}\n${canonicalUrl}\n${bodyHash}`;
+    const expectedSig = crypto.createHmac("sha256", secret).update(canonicalString, "utf8").digest("hex");
+
+    const result = computeCanonicalHmacSignature({
+      timestamp,
+      method,
+      canonicalUrl,
+      serializedBody,
+      secret,
+    });
+
+    expect(result.signature).toBe(expectedSig);
+    expect(result.bodyHash).toBe(bodyHash);
+  });
+
+  it("correctly computes canonical HMAC with raw string payload", () => {
+    const timestamp = "1720000000000";
+    const method = "POST";
+    const canonicalUrl = "https://api.makex.in/v1/raw";
+    const serializedBody = "raw string event text";
     const secret = "test-secret-key-12345";
 
     const bodyHash = crypto.createHash("sha256").update(serializedBody, "utf8").digest("hex");
@@ -316,11 +339,122 @@ describe("lib/webhook - dispatchWebhook integration", () => {
     expect(capturedInit?.redirect).toBe("error");
 
     const sentHeaders = capturedInit?.headers as Record<string, string>;
-    expect(sentHeaders.Authorization).toBe("Bearer ext-token");
-    expect(sentHeaders.Host).toBeUndefined();
+    expect(sentHeaders.authorization).toBe("Bearer ext-token");
+    expect(sentHeaders.host).toBeUndefined();
     expect(sentHeaders["X-Timestamp"]).toBeDefined();
     expect(sentHeaders["X-Signature-SHA256"]).toBeDefined();
+    expect(sentHeaders["content-type"]).toBe("application/json; charset=utf-8");
+  });
+
+  it("defaults Content-Type to application/json; charset=utf-8 for object payload", async () => {
+    let capturedInit: RequestInit | undefined;
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      capturedInit = init;
+      return new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 });
+    });
+    const mockLookup = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+
+    await dispatchWebhook(
+      {
+        url: "https://makex.in/api/v1/notify",
+        method: "POST",
+        payload: { title: "Alert", priority: 4, tags: ["warning"] },
+        timeoutMs: 5000,
+      },
+      {
+        customFetch: mockFetch as unknown as typeof fetch,
+        dnsLookup: mockLookup,
+      }
+    );
+
+    const sentHeaders = capturedInit?.headers as Record<string, string>;
+    expect(sentHeaders["content-type"]).toBe("application/json; charset=utf-8");
+    expect(capturedInit?.body).toBe(JSON.stringify({ title: "Alert", priority: 4, tags: ["warning"] }));
+  });
+
+  it("preserves case-insensitive user Content-Type override without duplicate headers", async () => {
+    let capturedInit: RequestInit | undefined;
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      capturedInit = init;
+      return new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 });
+    });
+    const mockLookup = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+
+    await dispatchWebhook(
+      {
+        url: "https://makex.in/api/v1/custom",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        payload: { key: "value" },
+        timeoutMs: 5000,
+      },
+      {
+        customFetch: mockFetch as unknown as typeof fetch,
+        dnsLookup: mockLookup,
+      }
+    );
+
+    const sentHeaders = capturedInit?.headers as Record<string, string>;
+    expect(sentHeaders["content-type"]).toBe("application/x-www-form-urlencoded");
+    // Ensure no capitalized duplicate exists
+    expect(sentHeaders["Content-Type"]).toBeUndefined();
+  });
+
+  it("defaults Content-Type to text/plain; charset=utf-8 and passes raw string for string payload", async () => {
+    let capturedInit: RequestInit | undefined;
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      capturedInit = init;
+      return new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 });
+    });
+    const mockLookup = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+
+    await dispatchWebhook(
+      {
+        url: "https://makex.in/api/v1/raw",
+        method: "POST",
+        payload: "Raw plain text webhook message",
+        timeoutMs: 5000,
+      },
+      {
+        customFetch: mockFetch as unknown as typeof fetch,
+        dnsLookup: mockLookup,
+      }
+    );
+
+    const sentHeaders = capturedInit?.headers as Record<string, string>;
+    expect(sentHeaders["content-type"]).toBe("text/plain; charset=utf-8");
+    expect(capturedInit?.body).toBe("Raw plain text webhook message");
+  });
+
+  it("allows user Content-Type override on string payload", async () => {
+    let capturedInit: RequestInit | undefined;
+    const mockFetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      capturedInit = init;
+      return new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 });
+    });
+    const mockLookup = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+
+    await dispatchWebhook(
+      {
+        url: "https://makex.in/api/v1/raw-json",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        payload: '{"preSerialized":true}',
+        timeoutMs: 5000,
+      },
+      {
+        customFetch: mockFetch as unknown as typeof fetch,
+        dnsLookup: mockLookup,
+      }
+    );
+
+    const sentHeaders = capturedInit?.headers as Record<string, string>;
     expect(sentHeaders["content-type"]).toBe("application/json");
+    expect(capturedInit?.body).toBe('{"preSerialized":true}');
   });
 
   it("handles GET request without body", async () => {
@@ -383,6 +517,16 @@ describe("lib/webhook - webhookInputSchema validation", () => {
     expect(parsed.url).toBe("https://example.com/webhook");
     expect(parsed.method).toBe("POST");
     expect(parsed.timeoutMs).toBe(15000);
+  });
+
+  it("validates string payload successfully", () => {
+    const parsed = webhookInputSchema.parse({
+      url: "https://example.com/webhook",
+      method: "POST",
+      payload: "plain text notification",
+    });
+
+    expect(parsed.payload).toBe("plain text notification");
   });
 
   it("defaults method to POST and timeout to 10000", () => {
